@@ -10,7 +10,11 @@ VkInstance instance;
 VkSurfaceKHR surface;
 VkDevice device;
 VkSwapchainKHR swapchain;
+VkImageView* imageViews;
 GLFWwindow* window;
+
+uint32_t amountOfImagesInSwapChain = 0;
+
 const uint32_t WIDTH = 400;
 const uint32_t HEIGHT = 300;
 
@@ -281,6 +285,38 @@ void startVulkan()
 
     result = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain);
 
+    vkGetSwapchainImagesKHR(device, swapchain, &amountOfImagesInSwapChain, nullptr);
+    VkImage* swapchainImages = new VkImage[amountOfImagesInSwapChain];
+    result = vkGetSwapchainImagesKHR(device, swapchain, &amountOfImagesInSwapChain, swapchainImages);
+    ASSERT_VULKAN(result);
+
+    imageViews = new VkImageView[amountOfImagesInSwapChain];
+
+    for (uint32_t i = 0; i < amountOfImagesInSwapChain; ++i)
+    {
+        VkImageViewCreateInfo imageViewCreateInfo;
+        imageViewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageViewCreateInfo.pNext = nullptr;
+        imageViewCreateInfo.flags = 0;
+        imageViewCreateInfo.image = swapchainImages[i];
+        imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        imageViewCreateInfo.format = VK_FORMAT_B8G8R8A8_UNORM; // TODO check if valid
+        imageViewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
+        imageViewCreateInfo.subresourceRange.levelCount = 1;
+        imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+        imageViewCreateInfo.subresourceRange.layerCount = 1;
+
+        result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &imageViews[i]);
+        ASSERT_VULKAN(result);
+    }
+
+
+    delete[] swapchainImages;
     delete[] layers;
     delete[] extensions;
     //delete[] physicalDevices;
@@ -298,6 +334,10 @@ void shutdownVulkan()
     vkDeviceWaitIdle(device);
 
     // Destroy after all tasks done
+    for (uint32_t i = 0; i < amountOfImagesInSwapChain; ++i) {
+        vkDestroyImageView(device, imageViews[i], nullptr);
+    }
+    delete[] imageViews;
     vkDestroySwapchainKHR(device, swapchain, nullptr);
     vkDestroyDevice(device, nullptr);
     vkDestroySurfaceKHR(instance, surface, nullptr);
