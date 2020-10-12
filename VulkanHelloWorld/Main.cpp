@@ -1,13 +1,16 @@
-#include "vulkan/vulkan.h"
 #include <iostream>
 #include <vector>
 
+#define GLFW_INCLUDE_VULKAN
+#include <GLFW/glfw3.h>
 #define ASSERT_VULKAN(val) if(val != VK_SUCCESS) { __debugbreak();}
-
 #define SUPPORTS_FEATURE(val) (val == 1) ? "true" : "false";
 
 VkInstance instance;
+VkSurfaceKHR surface;
 VkDevice device;
+GLFWwindow* window;
+
 
 void printStats(const VkPhysicalDevice & device) {
     VkPhysicalDeviceProperties properties;
@@ -67,8 +70,17 @@ void printStats(const VkPhysicalDevice & device) {
     std::cout << std::endl;
 };
 
-int main() {
+void startGLFW()
+{
+    glfwInit();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
 
+    window = glfwCreateWindow(400, 300, "Vulkan Hello World", nullptr, nullptr);
+}
+
+void startVulkan()
+{
     VkApplicationInfo appInfo;
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     appInfo.pNext = nullptr;
@@ -120,6 +132,9 @@ int main() {
         "VK_LAYER_KHRONOS_validation"
     };
 
+    uint32_t amountGLFWExtensions = 0;
+    auto glfwExtensions = glfwGetRequiredInstanceExtensions(&amountGLFWExtensions);
+
     VkInstanceCreateInfo instanceInfo;
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceInfo.pNext = nullptr;
@@ -127,10 +142,13 @@ int main() {
     instanceInfo.pApplicationInfo = &appInfo;
     instanceInfo.enabledLayerCount = validationLayers.size();
     instanceInfo.ppEnabledLayerNames = validationLayers.data();
-    instanceInfo.enabledExtensionCount = 0;
-    instanceInfo.ppEnabledExtensionNames = nullptr;
+    instanceInfo.enabledExtensionCount = amountGLFWExtensions;
+    instanceInfo.ppEnabledExtensionNames = glfwExtensions;
 
     result = vkCreateInstance(&instanceInfo, nullptr, &instance);
+    ASSERT_VULKAN(result);
+
+    result = glfwCreateWindowSurface(instance, window, nullptr, &surface);
     ASSERT_VULKAN(result);
 
     // Load amaount of devices
@@ -185,15 +203,40 @@ int main() {
     // Choose family index correct (look way up)
     vkGetDeviceQueue(device, 0, 0, &queue);
 
+    delete[] layers;
+    delete[] extensions;
+    //delete[] physicalDevices;
+}
+
+void gameLoop()
+{
+    while (!glfwWindowShouldClose(window)) {
+        glfwPollEvents();
+    }
+}
+
+void shutdownVulkan()
+{
     vkDeviceWaitIdle(device);
 
     // Destroy after all tasks done
     vkDestroyDevice(device, nullptr);
+    vkDestroySurfaceKHR(instance, surface, nullptr);
     vkDestroyInstance(instance, nullptr);
+}
 
-    delete[] layers;
-    delete[] extensions;
-    //delete[] physicalDevices;
+void shutdownGLFW()
+{
+    glfwDestroyWindow(window);
+}
+
+int main() {
+
+    startGLFW();
+    startVulkan();
+    gameLoop();
+    shutdownVulkan();
+    shutdownGLFW();
 
     return 0;
 }
