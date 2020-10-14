@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include <fstream>
 
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
@@ -115,6 +116,23 @@ void printStats(const VkPhysicalDevice & device) {
     delete[] surfaceFormats;
     delete[] presentModes;
 };
+
+std::vector<char> readFile(const std::string &filename)
+{
+    std::ifstream file(filename, std::ios::binary | std::ios::ate);
+
+    if (file) {
+        size_t fileSize = (size_t)file.tellg();
+
+        std::vector<char> fileBuffer(fileSize);
+        file.seekg(0);
+        file.read(fileBuffer.data(), fileSize);
+        file.close();        
+        return fileBuffer;
+    } else {
+        throw std::runtime_error("Failed to open file '" + filename + "' !");
+    }
+}
 
 void startGLFW()
 {
@@ -314,6 +332,13 @@ void startVulkan()
         result = vkCreateImageView(device, &imageViewCreateInfo, nullptr, &imageViews[i]);
         ASSERT_VULKAN(result);
     }
+
+    auto shaderCodeVert = readFile("vert.spv");
+    auto shaderCodeFrag = readFile("frag.spv");
+
+    std::cout << "Shadersize: " << std::endl;
+    std::cout << shaderCodeVert.size() << std::endl;
+    std::cout << shaderCodeFrag.size() << std::endl;
 
 
     delete[] swapchainImages;
