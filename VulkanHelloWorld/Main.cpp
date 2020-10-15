@@ -12,11 +12,17 @@ VkSurfaceKHR surface;
 VkDevice device;
 VkSwapchainKHR swapchain;
 VkImageView* imageViews;
+VkFramebuffer* framebuffers;
 VkShaderModule shaderModuleVert, shaderModuleFrag;
 VkPipelineLayout pipelineLayout;
-GLFWwindow* window;
 VkRenderPass renderPass;
+VkPipeline pipeline;
+VkCommandPool commandPool;
+VkCommandBuffer* commandBuffers;
+VkSemaphore semaphoreImageAvailable, semaphoreRenderingDone;
+VkQueue queue;
 uint32_t amountOfImagesInSwapChain = 0;
+GLFWwindow* window;
 
 const uint32_t WIDTH = 400;
 const uint32_t HEIGHT = 300;
@@ -293,7 +299,6 @@ void startVulkan()
         __debugbreak();
     }
 
-    VkQueue queue;
     // Choose family index correct (look way up)
     vkGetDeviceQueue(device, 0, 0, &queue);
 
@@ -517,6 +522,15 @@ void startVulkan()
     subPassDescription.preserveAttachmentCount = 0;
     subPassDescription.pPreserveAttachments = nullptr;
 
+    VkSubpassDependency subPassDependency;
+    subPassDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    subPassDependency.dstSubpass = 0;
+    subPassDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subPassDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subPassDependency.srcAccessMask = 0;
+    subPassDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    subPassDependency.dependencyFlags = 0;
+
     VkRenderPassCreateInfo renderPassCreateInfo;
     renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     renderPassCreateInfo.pNext = nullptr;
@@ -525,8 +539,8 @@ void startVulkan()
     renderPassCreateInfo.pAttachments = &attachmentDescription;
     renderPassCreateInfo.subpassCount = 1;
     renderPassCreateInfo.pSubpasses = &subPassDescription;
-    renderPassCreateInfo.dependencyCount = 0;
-    renderPassCreateInfo.pDependencies = nullptr;
+    renderPassCreateInfo.dependencyCount = 1;
+    renderPassCreateInfo.pDependencies = &subPassDependency;
 
     result = vkCreateRenderPass(device, &renderPassCreateInfo, nullptr, &renderPass);
     ASSERT_VULKAN(result);
@@ -552,17 +566,134 @@ void startVulkan()
     pipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
     pipelineCreateInfo.basePipelineIndex = -1;
 
+    result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &pipeline);
+    ASSERT_VULKAN(result);
+
+    framebuffers = new VkFramebuffer[amountOfImagesInSwapChain]();
+
+    for (size_t i = 0; i < amountOfImagesInSwapChain; ++i) {
+        VkFramebufferCreateInfo frameBufferCreateInfo;
+        frameBufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO ;
+        frameBufferCreateInfo.pNext = nullptr;
+        frameBufferCreateInfo.flags = 0;
+        frameBufferCreateInfo.renderPass = renderPass;
+        frameBufferCreateInfo.attachmentCount = 1;
+        frameBufferCreateInfo.pAttachments = &(imageViews[i]) ;
+        frameBufferCreateInfo.width = WIDTH;
+        frameBufferCreateInfo.height = HEIGHT;
+        frameBufferCreateInfo.layers = 1;
+
+        result = vkCreateFramebuffer(device, &frameBufferCreateInfo, nullptr, &(framebuffers[i]));
+        ASSERT_VULKAN(result);
+    }
+
+    VkCommandPoolCreateInfo commandPoolCreateInfo;
+    commandPoolCreateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    commandPoolCreateInfo.pNext = nullptr;
+    commandPoolCreateInfo.flags = 0;
+    commandPoolCreateInfo.queueFamilyIndex = 0; // Get correct queue with VK_QUEUE_GRAPHICS_BIT enabled - this is the index
+
+    result = vkCreateCommandPool(device, &commandPoolCreateInfo, nullptr, &commandPool);
+    ASSERT_VULKAN(result);
+
+    VkCommandBufferAllocateInfo commandBufferAllocateInfo;
+    commandBufferAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    commandBufferAllocateInfo.pNext = nullptr;
+    commandBufferAllocateInfo.commandPool = commandPool;
+    commandBufferAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    commandBufferAllocateInfo.commandBufferCount = amountOfImagesInSwapChain;
+
+    commandBuffers = new VkCommandBuffer[amountOfImagesInSwapChain]();
+    result = vkAllocateCommandBuffers(device, &commandBufferAllocateInfo, commandBuffers);
+    ASSERT_VULKAN(result);
+
+    VkCommandBufferBeginInfo commandBufferBeginInfo;
+    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    commandBufferBeginInfo.pNext = nullptr;
+    commandBufferBeginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
+    commandBufferBeginInfo.pInheritanceInfo = nullptr;
+
+    for (size_t i = 0; i < amountOfImagesInSwapChain; ++i) {
+        result = vkBeginCommandBuffer(commandBuffers[i], &commandBufferBeginInfo);
+        ASSERT_VULKAN(result);
+
+        VkRenderPassBeginInfo renderPassBeginInfo;
+        renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderPassBeginInfo.pNext = nullptr;
+        renderPassBeginInfo.renderPass = renderPass;
+        renderPassBeginInfo.framebuffer = framebuffers[i];
+        renderPassBeginInfo.renderArea.offset = {0, 0};
+        renderPassBeginInfo.renderArea.extent= {WIDTH, HEIGHT};
+        VkClearValue clearValue = { 0.0f, 0.0f, 0.0f, 1.0f };
+        renderPassBeginInfo.clearValueCount = 1;
+        renderPassBeginInfo.pClearValues = &clearValue;
+
+        vkCmdBeginRenderPass(commandBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+        vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+        vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(commandBuffers[i]);
+
+        result = vkEndCommandBuffer(commandBuffers[i]);
+        ASSERT_VULKAN(result);
+    }
+
+    VkSemaphoreCreateInfo semaphoreCreateInfo;
+    semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+    semaphoreCreateInfo.pNext = nullptr;
+    semaphoreCreateInfo.flags = 0;
+
+    result = vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &semaphoreImageAvailable);
+    ASSERT_VULKAN(result);
+    result = vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &semaphoreRenderingDone);
+    ASSERT_VULKAN(result);
 
     delete[] swapchainImages;
     delete[] layers;
     delete[] extensions;
-    //delete[] physicalDevices;
+}
+
+void drawFrame() {
+    uint32_t imageIndex;
+    VkResult result = vkAcquireNextImageKHR(device, swapchain, std::numeric_limits<uint64_t>::max(), semaphoreImageAvailable, VK_NULL_HANDLE, &imageIndex);
+    ASSERT_VULKAN(result);
+
+    VkSubmitInfo submitInfo;
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.pNext = nullptr;
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = &semaphoreImageAvailable;   
+    VkPipelineStageFlags waitStageMask[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    submitInfo.pWaitDstStageMask = waitStageMask;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &(commandBuffers[imageIndex]);
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = &semaphoreRenderingDone;
+
+    result = vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE);
+    ASSERT_VULKAN(result);
+
+    VkPresentInfoKHR presentInfo;
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    presentInfo.pNext = nullptr;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &semaphoreRenderingDone;
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = &swapchain;
+    presentInfo.pImageIndices = &imageIndex;
+    presentInfo.pResults = nullptr;
+
+    result = vkQueuePresentKHR(queue, &presentInfo);
+    ASSERT_VULKAN(result);
 }
 
 void gameLoop()
 {
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+        drawFrame();
     }
 }
 
@@ -570,6 +701,19 @@ void shutdownVulkan()
 {
     vkDeviceWaitIdle(device);
 
+    vkDestroySemaphore(device, semaphoreImageAvailable, nullptr);
+    vkDestroySemaphore(device, semaphoreRenderingDone, nullptr);
+
+    vkFreeCommandBuffers(device, commandPool, amountOfImagesInSwapChain, commandBuffers);
+    delete[] commandBuffers;
+
+    vkDestroyCommandPool(device, commandPool, nullptr);
+    for (size_t i = 0; i < amountOfImagesInSwapChain; ++i) {
+        vkDestroyFramebuffer(device, framebuffers[i], nullptr);
+    }
+    delete[] framebuffers;
+
+    vkDestroyPipeline(device, pipeline, nullptr);
     vkDestroyRenderPass(device, renderPass, nullptr);
 
     // Destroy after all tasks done
